@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/blang/semver"
-	"github.com/tebeka/selenium"
-	"github.com/tebeka/selenium/internal/seleniumtest"
-	"github.com/tebeka/selenium/sauce"
+	"github.com/trynova-ai/selenium"
+	"github.com/trynova-ai/selenium/internal/seleniumtest"
+	"github.com/trynova-ai/selenium/sauce"
 )
 
 var (
