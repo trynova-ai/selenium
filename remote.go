@@ -407,6 +407,23 @@ func newW3CCapabilities(caps Capabilities) Capabilities {
 	}
 }
 
+type returnedCapabilities struct {
+	// firefox via geckodriver: 55.0a1
+	BrowserVersion string
+	// chrome via chromedriver: 61.0.3116.0
+	// firefox via selenium 2: 45.9.0
+	// htmlunit: 9.4.3.v20170317
+	Version          string
+	PageLoadStrategy string
+	Proxy            Proxy
+	Timeouts         struct {
+		Implicit       float32
+		PageLoadLegacy float32 `json:"page load"`
+		PageLoad       float32
+		Script         float32
+	}
+}
+
 func (wd *remoteWD) NewSession() (string, error) {
 	// Detect whether the remote end complies with the W3C specification:
 	// non-compliant implementations use the top-level 'desiredCapabilities' JSON
@@ -459,23 +476,6 @@ func (wd *remoteWD) NewSession() (string, error) {
 		}
 
 		if len(reply.Value) > 0 {
-			type returnedCapabilities struct {
-				// firefox via geckodriver: 55.0a1
-				BrowserVersion string
-				// chrome via chromedriver: 61.0.3116.0
-				// firefox via selenium 2: 45.9.0
-				// htmlunit: 9.4.3.v20170317
-				Version          string
-				PageLoadStrategy string
-				Proxy            Proxy
-				Timeouts         struct {
-					Implicit       float32
-					PageLoadLegacy float32 `json:"page load"`
-					PageLoad       float32
-					Script         float32
-				}
-			}
-
 			value := struct {
 				SessionID string
 
@@ -518,6 +518,62 @@ func (wd *remoteWD) NewSession() (string, error) {
 		return wd.id, nil
 	}
 	panic("unreachable")
+}
+
+// ExistingSession connects to an existing session.
+func (wd *remoteWD) ExistingSession(sessionID string) error {
+	wd.id = sessionID
+	sessionURL := wd.requestURL("/session/%s", sessionID)
+
+	// Fetch the current capabilities to validate connection and check if session is still valid
+	response, err := wd.execute("GET", sessionURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to connect to session: %v", err)
+	}
+
+	reply := new(serverReply)
+	if err := json.Unmarshal(response, reply); err != nil {
+		return fmt.Errorf("failed to parse session response: %v", err)
+	}
+
+	if reply.Status != 0 {
+		return fmt.Errorf("session not available or invalid: status %d", reply.Status)
+	}
+
+	// Extract capabilities and set the browser version
+	if len(reply.Value) > 0 {
+		var value struct {
+			Capabilities *returnedCapabilities
+			returnedCapabilities
+		}
+
+		if err := json.Unmarshal(reply.Value, &value); err != nil {
+			return fmt.Errorf("error unmarshalling value: %v", err)
+		}
+
+		var caps returnedCapabilities
+		if value.Capabilities != nil {
+			caps = *value.Capabilities
+			wd.w3cCompatible = true
+		} else {
+			caps = value.returnedCapabilities
+		}
+
+		// Parse and set the browser version
+		for _, s := range []string{caps.Version, caps.BrowserVersion} {
+			if s == "" {
+				continue
+			}
+			v, err := parseVersion(s)
+			if err != nil {
+				debugLog("error parsing version: %v\n", err)
+				continue
+			}
+			wd.browserVersion = v
+		}
+	}
+
+	return nil
 }
 
 // SessionId returns the current session ID
