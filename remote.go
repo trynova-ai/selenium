@@ -238,6 +238,83 @@ func NewRemote(capabilities Capabilities, urlPrefix string) (WebDriver, error) {
 	return wd, nil
 }
 
+// ExistingSession connects to an existing session and captures capabilities from it.
+func ExistingSession(sessionID string, urlPrefix string) (WebDriver, error) {
+	if urlPrefix == "" {
+		urlPrefix = DefaultURLPrefix
+	}
+
+	wd := &remoteWD{
+		urlPrefix: urlPrefix,
+		id:        sessionID,
+	}
+
+	sessionURL := wd.requestURL("/session/%s", sessionID)
+
+	// Fetch the current capabilities to validate connection and check if session is still valid
+	response, err := wd.execute("GET", sessionURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to session: %v", err)
+	}
+
+	reply := new(serverReply)
+	if err := json.Unmarshal(response, reply); err != nil {
+		return nil, fmt.Errorf("failed to parse session response: %v", err)
+	}
+
+	if reply.Status != 0 {
+		return nil, fmt.Errorf("session not available or invalid: status %d", reply.Status)
+	}
+
+	// Extract capabilities and set the necessary fields in wd (remoteWD)
+	if len(reply.Value) > 0 {
+		var value struct {
+			Capabilities *returnedCapabilities
+			returnedCapabilities
+		}
+
+		if err := json.Unmarshal(reply.Value, &value); err != nil {
+			return nil, fmt.Errorf("error unmarshalling value: %v", err)
+		}
+
+		var caps returnedCapabilities
+		if value.Capabilities != nil {
+			caps = *value.Capabilities
+			wd.w3cCompatible = true
+		} else {
+			caps = value.returnedCapabilities
+		}
+
+		// Set the browser name from capabilities
+		if caps.BrowserName != "" {
+			wd.browser = caps.BrowserName
+		}
+
+		// Parse and set the browser version
+		for _, s := range []string{caps.Version, caps.BrowserVersion} {
+			if s == "" {
+				continue
+			}
+			v, err := parseVersion(s)
+			if err != nil {
+				debugLog("error parsing version: %v\n", err)
+				continue
+			}
+			wd.browserVersion = v
+		}
+
+		// Store other relevant capabilities
+		wd.capabilities = map[string]interface{}{
+			"browserVersion":   caps.BrowserVersion,
+			"pageLoadStrategy": caps.PageLoadStrategy,
+			"proxy":            caps.Proxy,
+			"timeouts":         caps.Timeouts,
+		}
+	}
+
+	return wd, nil
+}
+
 // DeleteSession deletes an existing session at the WebDriver instance
 // specified by the urlPrefix and the session ID.
 func DeleteSession(urlPrefix, id string) error {
@@ -408,6 +485,8 @@ func newW3CCapabilities(caps Capabilities) Capabilities {
 }
 
 type returnedCapabilities struct {
+	// BrowserName is the name of the browser.
+	BrowserName string `json:"browserName"`
 	// firefox via geckodriver: 55.0a1
 	BrowserVersion string
 	// chrome via chromedriver: 61.0.3116.0
@@ -518,62 +597,6 @@ func (wd *remoteWD) NewSession() (string, error) {
 		return wd.id, nil
 	}
 	panic("unreachable")
-}
-
-// ExistingSession connects to an existing session.
-func (wd *remoteWD) ExistingSession(sessionID string) error {
-	wd.id = sessionID
-	sessionURL := wd.requestURL("/session/%s", sessionID)
-
-	// Fetch the current capabilities to validate connection and check if session is still valid
-	response, err := wd.execute("GET", sessionURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to connect to session: %v", err)
-	}
-
-	reply := new(serverReply)
-	if err := json.Unmarshal(response, reply); err != nil {
-		return fmt.Errorf("failed to parse session response: %v", err)
-	}
-
-	if reply.Status != 0 {
-		return fmt.Errorf("session not available or invalid: status %d", reply.Status)
-	}
-
-	// Extract capabilities and set the browser version
-	if len(reply.Value) > 0 {
-		var value struct {
-			Capabilities *returnedCapabilities
-			returnedCapabilities
-		}
-
-		if err := json.Unmarshal(reply.Value, &value); err != nil {
-			return fmt.Errorf("error unmarshalling value: %v", err)
-		}
-
-		var caps returnedCapabilities
-		if value.Capabilities != nil {
-			caps = *value.Capabilities
-			wd.w3cCompatible = true
-		} else {
-			caps = value.returnedCapabilities
-		}
-
-		// Parse and set the browser version
-		for _, s := range []string{caps.Version, caps.BrowserVersion} {
-			if s == "" {
-				continue
-			}
-			v, err := parseVersion(s)
-			if err != nil {
-				debugLog("error parsing version: %v\n", err)
-				continue
-			}
-			wd.browserVersion = v
-		}
-	}
-
-	return nil
 }
 
 // SessionId returns the current session ID
