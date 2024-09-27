@@ -262,6 +262,7 @@ func ExistingSession(sessionID string, executorURL string) (WebDriver, error) {
 	wd := &remoteWD{
 		urlPrefix: executorURL,
 		id:        sessionID,
+		w3cCompatible: true,
 	}
 
 	// Wrap the original wd into the custom remoteWDWrapper
