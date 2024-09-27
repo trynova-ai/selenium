@@ -238,83 +238,47 @@ func NewRemote(capabilities Capabilities, urlPrefix string) (WebDriver, error) {
 	return wd, nil
 }
 
-// ExistingSession connects to an existing session and captures capabilities from it.
-func ExistingSession(sessionID string, urlPrefix string) (WebDriver, error) {
-	if urlPrefix == "" {
-		urlPrefix = DefaultURLPrefix
-	}
-
-	wd := &remoteWD{
-		urlPrefix: urlPrefix,
-		id:        sessionID,
-		browser:   "chrome",
-	}
-
-	sessionURL := wd.requestURL("/session/%s", sessionID)
-
-	// Fetch the current capabilities to validate connection and check if session is still valid
-	response, err := wd.execute("GET", sessionURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to session: %v", err)
-	}
-
-	reply := new(serverReply)
-	if err := json.Unmarshal(response, reply); err != nil {
-		return nil, fmt.Errorf("failed to parse session response: %v", err)
-	}
-
-	if reply.Status != 0 {
-		return nil, fmt.Errorf("session not available or invalid: status %d", reply.Status)
-	}
-
-	// Extract capabilities and set the necessary fields in wd (remoteWD)
-	if len(reply.Value) > 0 {
-		var value struct {
-			Capabilities *returnedCapabilities
-			returnedCapabilities
-		}
-
-		if err := json.Unmarshal(reply.Value, &value); err != nil {
-			return nil, fmt.Errorf("error unmarshalling value: %v", err)
-		}
-
-		var caps returnedCapabilities
-		if value.Capabilities != nil {
-			caps = *value.Capabilities
-			wd.w3cCompatible = true
-		} else {
-			caps = value.returnedCapabilities
-		}
-
-		// Set the browser name from capabilities
-		if caps.BrowserName != "" {
-			wd.browser = caps.BrowserName
-		}
-
-		// Parse and set the browser version
-		for _, s := range []string{caps.Version, caps.BrowserVersion} {
-			if s == "" {
-				continue
-			}
-			v, err := parseVersion(s)
-			if err != nil {
-				debugLog("error parsing version: %v\n", err)
-				continue
-			}
-			wd.browserVersion = v
-		}
-
-		// Store other relevant capabilities
-		wd.capabilities = map[string]interface{}{
-			"browserVersion":   caps.BrowserVersion,
-			"pageLoadStrategy": caps.PageLoadStrategy,
-			"proxy":            caps.Proxy,
-			"timeouts":         caps.Timeouts,
-		}
-	}
-
-	return wd, nil
+// Custom remoteWDWrapper to intercept the execute method
+type remoteWDWrapper struct {
+	*remoteWD  // Embed the original remoteWD
+	sessionID  string
+	executorURL string
 }
+
+// Overriding the execute method
+func (rwd *remoteWDWrapper) execute(method string, url string, data []byte) (json.RawMessage, error) {
+	if strings.Contains(url, "newSession") {
+		// Return a mocked response for the newSession command
+		mockResponse := fmt.Sprintf(`{"value": null, "sessionId": "%s"}`, rwd.sessionID)
+		return json.RawMessage(mockResponse), nil
+	}
+	// Otherwise, call the original execute method
+	return rwd.remoteWD.execute(method, url, data)
+}
+
+// ExistingSession reuses an existing session
+func ExistingSession(sessionID string, executorURL string) (WebDriver, error) {
+	// Create a new instance of the original remoteWD
+	wd := &remoteWD{
+		urlPrefix: executorURL,
+		id:        sessionID,
+	}
+
+	// Wrap the original wd into the custom remoteWDWrapper
+	rwd := &remoteWDWrapper{
+		remoteWD:  wd,
+		sessionID: sessionID,
+		executorURL: executorURL,
+	}
+
+	// Set the session ID directly
+	rwd.id = sessionID
+
+	// Return the wrapped WebDriver
+	return rwd, nil
+}
+
+
 
 // DeleteSession deletes an existing session at the WebDriver instance
 // specified by the urlPrefix and the session ID.
