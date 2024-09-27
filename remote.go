@@ -247,6 +247,7 @@ func ExistingSession(sessionID string, urlPrefix string) (WebDriver, error) {
 	wd := &remoteWD{
 		urlPrefix: urlPrefix,
 		id:        sessionID,
+		browser:   "chrome",
 	}
 
 	sessionURL := wd.requestURL("/session/%s", sessionID)
